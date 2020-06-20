@@ -48,6 +48,7 @@ pub fn (c mut Channel) pull<T>() ?T {
 // close flags the channel as closed, pushing to a closed channel will panic
 pub fn (c mut Channel) close() {
     c.ctrl.lock()
+    defer c.ctrl.unlock()
     if c.closed {
         panic("Channel already closed")
     }
@@ -57,7 +58,6 @@ pub fn (c mut Channel) close() {
             r.receive(none)
         }
     }
-    c.ctrl.unlock()
 }
 
 pub fn (c mut Channel) len() int {
