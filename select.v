@@ -27,7 +27,7 @@ pub fn (s Select) push<T>(chan Channel<T>, value T, do fn()) {
 // pull is syntactic sugar: case x := <- chan: do(x)
 pub fn (s Select) pull<T>(chan Channel<T>, do fn(T)) {
 	if chan.registerReceiver(SelectReceiver{do,&s}) {
-		count++
+		s.count++
 	}
 }
 
