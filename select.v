@@ -3,17 +3,21 @@ module channels
 import sync
 
 /*
-select {                : s := channels.Select{}
+select {                : s := make_select()
    case x := <-c : ...  : s.pull(c, fn(x) { ... })
    case c <- x : ...    : s.push(c, x, fn() { ... })
    default: ...         : s.default(fn() { ... })
 }                       : s.block() // only if default is not used
 */
 
+pub fn make_select() &Select {
+    return &Select{m:sync.new_mutex(),b:sync.new_mutex()}
+}
+
 
 struct Select {
     mut:
-        m sync.Mutex
+        m &sync.Mutex
 		b &sync.Mutex
         finished bool
 		count int
@@ -21,12 +25,13 @@ struct Select {
 
 // push is syntactic sugar: case chan <- value: do...
 pub fn (s Select) push<T>(chan Channel<T>, value T, do fn()) {
-	chan.register_sender(SelectSender{value,do,&s})
+	chan.register_sender(SelectSender<T>{value,do,&s})
 }
 
 // pull is syntactic sugar: case x := <- chan: do(x)
 pub fn (s Select) pull<T>(chan Channel<T>, do fn(T)) {
-	if chan.registerReceiver(SelectReceiver{do,&s}) {
+	sr := SelectReceiver<T>{do,&s} // var created due to compiler bug?
+	if chan.register_receiver(sr) {
 		s.count++
 	}
 }
@@ -34,13 +39,13 @@ pub fn (s Select) pull<T>(chan Channel<T>, do fn(T)) {
 // default is syntactic sugar: default: do...
 // default OR block (not both) must be called at the end of the select operation
 pub fn (s Select) default(do fn()) {
-	m.lock()
+	m.m_lock()
 	if s.finished {
-		m.unlock()
+		m.m_unlock()
 		return
 	} else {
 		s.finished = true
-		m.unlock()
+		m.m_unlock()
 		if d != none {
 			d()
 		}
@@ -52,55 +57,55 @@ pub fn (s Select) default(do fn()) {
 // default OR block (not both) must be called at the end of the select operation 
 pub fn (s Select) block() {
 	if s.count > 0 {
-		s.m.lock()
-		defer s.m.unlock()
+		s.m.m_lock()
+		defer { s.m.m_unlock() }
 		if s.finished {
 			return
 		}
 		s.b = sync.Mutex{}
-		s.b.lock()
-		s.b.lock()
+		s.b.m_lock()
+		s.b.m_lock()
 	}
 }
 
-fn (s mut Select) claim() bool {
-	s.m.lock()
+fn (mut s Select) claim() bool {
+	s.m.m_lock()
 	if s.finished {
-		s.m.unlock()
+		s.m.m_unlock()
 		return false
 	}
 	return true
 }
 
-fn (s mut Select) cancel() { // When receiver bails
-	s.m.unlock()
+fn (mut s Select) cancel() { // When receiver bails
+	s.m.m_unlock()
 }
 
 struct SelectSender<T> {
 	value T
 	do fn()
 	mut:
-		&Select
+		sel Select
 }
 
-fn (s mut SelectSender) send(r Receiver) {
+fn (mut s SelectSender) send(r Receiver) {
 	r.receive(s.value)
-	s.finished = true
-	s.unlock()
-	if(s.b != none) s.b.unlock()
+	s.sel.finished = true
+	s.sel.m_unlock()
+	if s.sel.b != none { s.sel.b.m_unlock() }
 	s.do()
 }
 
 struct SelectReceiver<T> {
-	do fn(?T)
+	do fn(T)
 	mut: 
-		Select
+		sel Select
 }
 
 fn (s SelectReceiver) receive(value ?T) ?T{
 	s.finished = true
-	s.unlock()
-	if(s.b != none) s.b.unlock()
+	s.sel.m_unlock()
+	if s.sel.b != none { s.sel.b.m_unlock() }
 	s.do(value)
 }
 

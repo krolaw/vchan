@@ -11,14 +11,14 @@ import sync
 
 // makeChan provides Go like channels. size -1 for uncapped channels
 pub fn make_chan<T>(size int) &Channel<T> {
-    return &Channel{size: size}
+    return &Channel{size: size, ctrl:sync.new_mutex()}
 }
 
 
 struct Channel<T> {
     size int
     mut:
-        ctrl sync.Mutex
+        ctrl &sync.Mutex
         receivers []Receiver
         senders []Sender
         buffer []T
@@ -27,28 +27,28 @@ struct Channel<T> {
 
 // push places a value to the end of Channel, blocking until a free slot is available.
 // Syntactic sugar for: c <- value
-pub fn (c mut Channel<T>) push(value T) {
-    var m Mutex
-    m.lock()
+pub fn (mut c Channel<T>) push(value T) {
+    m := sync.new_waiter()
+    m.wait()
     c.register_sender(blockingSender{value,&m})
-    m.lock()
+    m.wait()
 }
 
 // pull takes a value from the front of the Channel, blocking until a value is available
 // Syntactic sugar for: <- c
-pub fn (c mut Channel) pull<T>() ?T {
-    var m Mutex
+pub fn (mut c Channel) pull<T>() ?T {
+    m := sync.new_waiter()
     receiver := blockingReceiver{m:m}
-    m.lock()
+    m.wait()
     c.reg(receiver)
-    m.lock()
+    m.wait()
     return receiver.v
 }
 
 // close flags the channel as closed, pushing to a closed channel will panic
-pub fn (c mut Channel) close() {
-    c.ctrl.lock()
-    defer c.ctrl.unlock()
+pub fn (mut c Channel) close() {
+    c.ctrl.m_lock()
+    defer { c.ctrl.m_unlock() }
     if c.closed {
         panic("Channel already closed")
     }
@@ -60,9 +60,9 @@ pub fn (c mut Channel) close() {
     }
 }
 
-pub fn (c mut Channel) len() int {
-    c.ctrl.lock()
-    defer c.ctrl.unlock()
+pub fn (mut c Channel) len() int {
+    c.ctrl.m_lock()
+    defer { c.ctrl.m_unlock() }
     return c.buffer.len()
 }
 
@@ -70,9 +70,9 @@ pub fn (c Channel) cap() int {
     return c.size
 }
 
-fn (c mut Channel<T>) register_sender(s ClaimSender) {
-    c.ctrl.lock()
-    defer c.ctrl.unlock()
+fn (mut c Channel<T>) register_sender(s ClaimSender) {
+    c.ctrl.m_lock()
+    defer { c.ctrl.m_unlock() }
 
     if !s.claim() {
         return // Select sender disappearered while waiting for channel lock, so exit
@@ -99,13 +99,13 @@ fn (c mut Channel<T>) register_sender(s ClaimSender) {
     senders.add(s)
 }
 
-fn (c mut Channel<T>) receive(value T) {
+fn (mut c Channel<T>) receive(value T) {
     c.buffer.add(value)
 }
 
-fn (c mut Channel<T>) register_receiver(r ClaimReceiver) bool {
-    c.ctrl.lock()
-    defer c.ctrl.unlock()
+fn (mut c Channel<T>) register_receiver(r ClaimReceiver) bool {
+    c.ctrl.m_lock()
+    defer { c.ctrl.m_unlock() }
 
     if !r.claim() {
         return true // Select receiver disappearered while waiting for channel lock, so exit
