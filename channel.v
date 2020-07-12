@@ -38,9 +38,9 @@ pub fn (mut c Channel<T>) push(value T) {
 // Syntactic sugar for: <- c
 pub fn (mut c Channel) pull<T>() ?T {
     m := sync.new_waiter()
-    receiver := blockingReceiver{m:m}
     m.wait()
-    c.reg(receiver)
+    receiver := Receiver{m:m} // BlockingReceiver
+    c.register_receiver(receiver)
     m.wait()
     return receiver.v
 }
@@ -103,7 +103,7 @@ fn (mut c Channel<T>) receive(value T) {
     c.buffer.add(value)
 }
 
-fn (mut c Channel<T>) register_receiver(r ClaimReceiver) bool {
+fn (mut c Channel<T>) register_receiver(r Receiver) bool {
     c.ctrl.m_lock()
     defer { c.ctrl.m_unlock() }
 

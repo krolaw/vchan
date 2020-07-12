@@ -2,16 +2,16 @@ module channels
 
 import sync
 
-interface ClaimSender<T> {
+interface ClaimSender{ //<T> {
 	claim() bool
-	send(Receiver<T>)
+	send(Receiver) //<T>)
 	cancel()
 }
 
-interface Sender<T> {
-	send(Receiver<T>)
+interface Sender{ //<T> {
+	send(Receiver) //<T>)
 }
-
+/*
 interface ClaimReceiver<T> {
 	claim() bool
 	receive(T)
@@ -20,7 +20,7 @@ interface ClaimReceiver<T> {
 
 interface Receiver<T> {
 	receive(T)
-}
+}*/
 
 
 struct BlockingSender<T> {
@@ -29,9 +29,9 @@ struct BlockingSender<T> {
         m &sync.Mutex 
 }
 
-fn (s mut BlockingSender) send() T {
-    defer s.m.unlock()
-    return s.value
+fn (mut s BlockingSender) send(r Receiver) {
+    defer { s.m.unlock() }
+    return r.send(s.value)
 }
 
 fn (s BlockingSender) claim() bool {
@@ -40,15 +40,15 @@ fn (s BlockingSender) claim() bool {
 
 fn (s BlockingSender) cancel() {}
 
-
+// BlockingReceiver currently unused
 struct BlockingReceiver<T> {
     mut:
         v ?T
         m &sync.Mutex 
 }
 
-fn (s mut BlockingReceiver) receive(value ?T) {
-    defer s.m.unlock()
+fn (mut s BlockingReceiver) receive(value ?T) {
+    defer { s.m.unlock() }
     s.v = value
 }
 

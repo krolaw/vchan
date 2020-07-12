@@ -30,7 +30,7 @@ pub fn (s Select) push<T>(chan Channel<T>, value T, do fn()) {
 
 // pull is syntactic sugar: case x := <- chan: do(x)
 pub fn (s Select) pull<T>(chan Channel<T>, do fn(T)) {
-	sr := SelectReceiver<T>{do,&s} // var created due to compiler bug?
+	sr := Receiver<T>{do:do,sel:&s} // var created due to compiler bug? // SelectReceiver
 	if chan.register_receiver(sr) {
 		s.count++
 	}
