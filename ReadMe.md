@@ -7,7 +7,7 @@ Pros
 - Requires only Mutexes.
 
 Cons
-- Completely untested, can't compile, awaiting generic structs, likely has bugs/design issues.
+- Completely untested, can't compile, awaiting fixes, likely has bugs/design issues.
 - It currently is non-performant due to its internal array handling.
 - Uses locks, I hear there are non-locking implementations.
 - Poorly researched, the focus was getting something functional NOW, with expectations of replacement LATER.

@@ -11,104 +11,79 @@ select {                : s := make_select()
 */
 
 pub fn make_select() &Select {
-    return &Select{m:sync.new_mutex(),b:sync.new_mutex()}
+    s := &Select{}
+	s.blocker.wait{}
 }
-
 
 struct Select {
     mut:
-        m &sync.Mutex
-		b &sync.Mutex
-        finished bool
-		count int
+		ctrl &sync.Mutex // Manager Mutex
+		blocker &sync.Waiter = &sync.Waiter(0) // Blocker
+		finished bool
+		task fn() // what to do once route decided
+}
+
+pub fn (s Select) default(do fn()) {
+	s.ctrl.m_lock()
+	defer { s.ctrl.unlock() }
+	if s.finished {
+		return
+	}
+	s.finished = true
+	do()
+}
+
+pub fn (s Select) block() {
+	s.blocker.wait()
+	s.task()
 }
 
 // push is syntactic sugar: case chan <- value: do...
-pub fn (s Select) push<T>(chan Channel<T>, value T, do fn()) {
-	chan.register_sender(SelectSender<T>{value,do,&s})
-}
-
-// pull is syntactic sugar: case x := <- chan: do(x)
-pub fn (s Select) pull<T>(chan Channel<T>, do fn(T)) {
-	sr := Receiver<T>{do:do,sel:&s} // var created due to compiler bug? // SelectReceiver
-	if chan.register_receiver(sr) {
-		s.count++
-	}
-}
-
-// default is syntactic sugar: default: do...
-// default OR block (not both) must be called at the end of the select operation
-pub fn (s Select) default(do fn()) {
-	m.m_lock()
+pub fn (s Select) push(mut chan Channel, value int, do fn()) {
+	s.ctrl.m_lock() // Prevent other channels completing while setting up this one
+	defer { s.ctrl.unlock() }
 	if s.finished {
-		m.m_unlock()
 		return
-	} else {
-		s.finished = true
-		m.m_unlock()
-		if d != none {
-			d()
-		}
 	}
-}
-
-// block is syntactic sugar for the end of the select, signalling that 
-// the select should block until one channel operation is chosen
-// default OR block (not both) must be called at the end of the select operation 
-pub fn (s Select) block() {
-	if s.count > 0 {
-		s.m.m_lock()
-		defer { s.m.m_unlock() }
+	if chan.push_select(value,fn() ?int {
+		s.ctrl.m_lock()
+		defer { s.ctrl.unlock() }
 		if s.finished {
-			return
+			return none
 		}
-		s.b = sync.Mutex{}
-		s.b.m_lock()
-		s.b.m_lock()
+		s.finished = true
+		s.task = do // set, not run as this isn't select's thread
+		s.blocker.stop()
+	}) {
+		s.finished = true
+		s.task = do
+		s.blocker.stop()
 	}
 }
 
-fn (mut s Select) claim() bool {
-	s.m.m_lock()
+//pull_select(fn(?int) bool) ?int
+pub fn (s Select) pull(mut chan Channel, do fn(?int)) {
+	s.ctrl.m_lock() // Prevent other channels completing while setting up this one
+	defer { s.ctrl.unlock() }
 	if s.finished {
-		s.m.m_unlock()
-		return false
+		return
 	}
-	return true
-}
-
-fn (mut s Select) cancel() { // When receiver bails
-	s.m.m_unlock()
-}
-
-struct SelectSender<T> {
-	value T
-	do fn()
-	mut:
-		sel Select
-}
-
-fn (mut s SelectSender) send(r Receiver) {
-	r.receive(s.value)
-	s.sel.finished = true
-	s.sel.m_unlock()
-	if s.sel.b != none { s.sel.b.m_unlock() }
-	s.do()
-}
-
-struct SelectReceiver<T> {
-	do fn(T)
-	mut: 
-		sel Select
-}
-
-fn (s SelectReceiver) receive(value ?T) ?T{
+	value := chan.pull_select(fn(s ?int) bool {
+		s.ctrl.m_lock()
+		defer { s.ctrl.unlock() }
+		if s.finished {
+			return false
+		}
+		s.finished = true
+		s.task = fn() { do(s) }// set, not run as this isn't select's thread
+		s.blocker.stop()
+		return true
+	}) or {
+		return
+	}
 	s.finished = true
-	s.sel.m_unlock()
-	if s.sel.b != none { s.sel.b.m_unlock() }
-	s.do(value)
+	s.task = fn() { do(s) }
+	s.blocker.stop()
 }
-
-
 
 
