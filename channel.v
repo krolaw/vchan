@@ -34,8 +34,8 @@ pub fn pull() ?int {
         w.wait()
         var value ?int
         c.consumers.add(fn(v ?int) bool) {
-            w.stop()
             value = v
+            w.stop()
             return true
         })
         w.wait()
