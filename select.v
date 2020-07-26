@@ -75,7 +75,7 @@ pub fn (s Select) pull(mut chan Channel, do fn(?int)) {
 			return false
 		}
 		s.finished = true
-		s.task = fn() { do(s) }// set, not run as this isn't select's thread
+		s.task = fn() { do(s) } // set, not run as this isn't select's thread
 		s.blocker.stop()
 		return true
 	}) or {
