@@ -9,10 +9,18 @@ x := <- c    :  x := c.pull()
 for i in c { :  for i := c.pull() ; i != none ; i = c.pull() {
 */
 
+type Producer fn() ?int
+type Consumer fn(_ ?int) bool
+
 // makeChan provides Go like channels. size -1 for uncapped channels
-pub fn make_chan(size int) &Channel {
+pub fn make_chan(cap int) &Channel {
     return &Channel{
-        size : size
+        ctrl: sync.new_mutex(),
+        size : cap,
+        producers : []Producer{},
+        consumers : []Consumer{},
+        buffer : []int{ cap: cap },
+        closed : false,
     }
 }
 
@@ -21,23 +29,25 @@ struct Channel {
 
     mut:
         ctrl &sync.Mutex = &sync.Mutex(0) // Manager Mutex
-        producers []fn() ?int
-        consumers []fn(?int) bool
+        producers []Producer
+        consumers []Consumer
         buffer []int // buffered channel data
         closed bool
 }
 
+type NoneInt ?int
+
 // pull blocks until value is returned, returns none if channel closes
-pub fn pull() ?int {
-    return pull_else(fn() ?int{
-        w := &sync.Waiter(0)
+pub fn (mut c Channel) pull() ?int {
+    return c.pull_else(fn() ?int{
+        mut w := &sync.Waiter(0)
         w.wait()
-        var value ?int
-        c.consumers.add(fn(v ?int) bool) {
+        mut value := NoneInt(0) // mut value := ?int(none)
+        c.consumers << fn(v ?int) bool {
             value = v
             w.stop()
             return true
-        })
+        }
         w.wait()
         return value
     })
@@ -46,14 +56,14 @@ pub fn pull() ?int {
 // pull_select returns a value if immediately available from the channel.
 // Otherwise f will be called with a value (none if chan closes) when available.
 // f returns false if select no longer wants value from channel.
-fn (mut c Channel) pull_select(f fn(?int) bool) ?int {
-    return pull_else(fn() ?int {
-        c.consumers.add(f)
+fn (mut c Channel) pull_select(f Consumer) ?int {
+    return c.pull_else(fn() ?int {
+        c.consumers << f
         return none
     })
 }
 
-fn (mut c Channel) pull_else(do_else fn()) ?int {
+fn (mut c Channel) pull_else(do_else fn() ?int) ?int {
     c.ctrl.m_lock()
     defer { c.ctrl.unlock() }
 
@@ -61,16 +71,16 @@ fn (mut c Channel) pull_else(do_else fn()) ?int {
         return none
     }
 
-    if buffer.len > 0 {
-        value := buffer[0]
-        buffer.removeAt(0)
+    if c.buffer.len > 0 {
+        value := c.buffer[0]
+        c.buffer = c.buffer[1..] // .removeAt(0)
         return value
     }
 
     for c.producers.len > 0 {
         p := c.producers[0]
-        c.producers.removeAt(0)
-        value := p(value) or {
+        c.producers = c.producers[1..] //.removeAt(0)
+        value := p() or {
             continue
         }
         return value
@@ -80,7 +90,7 @@ fn (mut c Channel) pull_else(do_else fn()) ?int {
 }
 
 // len() returns current length of channel
-pub fn (c Channel) len() int {
+pub fn (mut c Channel) len() int {
     c.ctrl.m_lock()
     defer { c.ctrl.unlock() }
     return c.buffer.len
@@ -92,7 +102,7 @@ pub fn (c Channel) cap() int {
 }
 
 // close closes the channel
-pub fn close() {
+pub fn (mut c Channel) close() {
     c.ctrl.m_lock()
     defer { c.ctrl.unlock() }
     if c.closed {
@@ -109,14 +119,14 @@ pub fn close() {
 
 // push blocks until value can be placed on channel
 //  push panics if channel is closed.
-pub fn (c Channel) push(value int) {
-    push_else(value,fn() {
-        w := &sync.Waiter(0)
+pub fn (mut c Channel) push(value int) {
+    c.push_else(value,fn() {
+        mut w := &sync.Waiter(0)
         w.wait()
-        c.producers.add(fn() ?int {
+        c.producers << fn() ?int {
             w.stop()
             return value
-        })
+        }
         w.wait()
     })
 }
@@ -124,13 +134,13 @@ pub fn (c Channel) push(value int) {
 // push_select returns true if it can immediately able to push to a channel.
 // Otherwise f will be called when the channel can be pushed. f returns none
 // if select no longer wants to push to the channel.
-fn (mut c Channel) push_select(value int, f fn() ?int) bool {
-    return push_else(value, fn() {
-        c.producers.add(f)
+fn (mut c Channel) push_select(value int, f Producer) bool {
+    return c.push_else(value, fn() {
+        c.producers << f
     })
 }
 
-fn (c Channel) push_else(value int, do_else fn()) bool {
+fn (mut c Channel) push_else(value int, do_else fn()) bool {
     c.ctrl.m_lock()
     defer { c.ctrl.unlock() }
 
@@ -140,14 +150,14 @@ fn (c Channel) push_else(value int, do_else fn()) bool {
 
     for c.consumers.len > 0 {
         r := c.consumers[0]
-        c.consumers.removeAt(0)
+        c.consumers = c.consumers[1..] // .removeAt(0)
         if r(value) {
             return true
         }
     }
 
-    if buffer.len < size || size < 0 {
-        c.buffer.add(value)
+    if c.buffer.len < c.size || c.size < 0 {
+        c.buffer << value
         return true
     }
 

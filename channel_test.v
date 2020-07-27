@@ -9,10 +9,10 @@ fn test_chan() {
 
 fn stress_chan(size int, senders int, receivers int, testsPerSender int) {
 
-    c := make_chan<int>(size)
+    mut c := make_chan(size)
 
-    go fn(c Channel) {
-        mut wg := &sync.WaitGroup{}
+    go fn(mut c Channel) {
+        mut wg := sync.new_waitgroup()
         wg.add(senders)
         for i := 0 ; i < senders ; i++ {
             go fn(i int) {
@@ -24,31 +24,29 @@ fn stress_chan(size int, senders int, receivers int, testsPerSender int) {
         }
         wg.wait()
         c.close()
-    }(c)
+    }(mut c)
 
-    c2 := makeChan(size)
+    mut c2 := make_chan(size)
     for i := 0 ; i < receivers ; i++ {
         go fn() {
             for {
-                r := c.pull(i)
-                if r.finished {
+                r := c.pull() or {
                     break
                 }
-                c2.push(r.value)
+                c2.push(r)
             }
         }()
     }
 
-    mut arr := [] // how do I init a zero length int array?
+    mut arr := []int{} // how do I init a zero length int array?
     for {
-        r := c2.pull()
-        if r.finished {
+        r := c2.pull() or {
             break
         }
         for i := 0 ; i < arr.len ; i++ {
-            assert arr[i] != r.value
+            assert arr[i] != r
         }
-        arr << r.value
+        arr << r
     }
 
     assert arr.len == testsPerSender * senders

@@ -11,8 +11,14 @@ select {                : s := make_select()
 */
 
 pub fn make_select() &Select {
-    s := &Select{}
-	s.blocker.wait{}
+    mut s := &Select{
+		ctrl: sync.new_mutex(),
+		blocker: sync.new_waiter(),
+		finished: false,
+		task: fn() { panic("Lib error: Task called before being replaced") }
+	}
+	s.blocker.wait()
+	return s
 }
 
 struct Select {
@@ -23,7 +29,7 @@ struct Select {
 		task fn() // what to do once route decided
 }
 
-pub fn (s Select) default(do fn()) {
+pub fn (mut s Select) default(do fn()) {
 	s.ctrl.m_lock()
 	defer { s.ctrl.unlock() }
 	if s.finished {
@@ -33,13 +39,13 @@ pub fn (s Select) default(do fn()) {
 	do()
 }
 
-pub fn (s Select) block() {
+pub fn (mut s Select) block() {
 	s.blocker.wait()
 	s.task()
 }
 
 // push is syntactic sugar: case chan <- value: do...
-pub fn (s Select) push(mut chan Channel, value int, do fn()) {
+pub fn (mut s Select) push(mut chan Channel, value int, do fn()) {
 	s.ctrl.m_lock() // Prevent other channels completing while setting up this one
 	defer { s.ctrl.unlock() }
 	if s.finished {
@@ -62,27 +68,27 @@ pub fn (s Select) push(mut chan Channel, value int, do fn()) {
 }
 
 //pull_select(fn(?int) bool) ?int
-pub fn (s Select) pull(mut chan Channel, do fn(?int)) {
+pub fn (mut s Select) pull(mut chan Channel, do fn(_ ?int)) {
 	s.ctrl.m_lock() // Prevent other channels completing while setting up this one
 	defer { s.ctrl.unlock() }
 	if s.finished {
 		return
 	}
-	value := chan.pull_select(fn(s ?int) bool {
+	value := chan.pull_select(fn(v ?int) bool {
 		s.ctrl.m_lock()
 		defer { s.ctrl.unlock() }
 		if s.finished {
 			return false
 		}
 		s.finished = true
-		s.task = fn() { do(s) } // set, not run as this isn't select's thread
+		s.task = fn() { do(v) } // set, not run as this isn't select's thread
 		s.blocker.stop()
 		return true
 	}) or {
 		return
 	}
 	s.finished = true
-	s.task = fn() { do(s) }
+	s.task = fn() { do(value) }
 	s.blocker.stop()
 }
 
